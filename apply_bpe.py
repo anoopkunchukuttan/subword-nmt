@@ -17,6 +17,8 @@ import sys
 import codecs
 import argparse
 from collections import defaultdict
+import itertools as it
+import re
 
 # hack for python2/3 compatibility
 from io import open
@@ -30,19 +32,36 @@ if sys.version_info < (3, 0):
 
 class BPE(object):
 
-    def __init__(self, codes, separator='@@'):
+    def __init__(self, codes, separator='@@', is_custom_unit=False, word_sep='^',notok=False):
         self.bpe_codes = [tuple(item.split()) for item in codes]
         # some hacking to deal with duplicates (only consider first instance)
         self.bpe_codes = dict([(code,i) for (i,code) in reversed(list(enumerate(self.bpe_codes)))])
 
         self.separator = separator
 
+        self.is_custom_unit=is_custom_unit
+        self.word_sep=word_sep
+        self.notok=notok
+
+    def sent_split(self,l): 
+
+        words=[]
+        if self.notok:
+            words=[l]
+        if self.is_custom_unit: 
+            words=l.split(self.word_sep)
+            words=list(it.chain.from_iterable(zip(words, [self.word_sep]*len(words))))[:-1]
+        else: 
+            words=line.split()
+
+        return words
+
     def segment(self, sentence):
         """segment single sentence (whitespace-tokenized string) with BPE encoding"""
 
         output = []
-        for word in sentence.split():
-            new_word = encode(word, self.bpe_codes)
+        for word in self.sent_split(re.sub(ur'\s+',u' ',sentence.strip())):
+            new_word = encode(word, self.bpe_codes, self.is_custom_unit, self.word_sep)
 
             for item in new_word[:-1]:
                 output.append(item + self.separator)
@@ -70,6 +89,16 @@ def create_parser():
     parser.add_argument(
         '--separator', '-s', type=str, default='@@', metavar='STR',
         help="Separator between non-final subword units (default: '%(default)s'))")
+    parser.add_argument(
+        '--custom_unit', '-u', action="store_true",
+        help="Use custom basic unit (default is character). Custom units are separated by space, while words are separated by character mentioned in --word_sep parameter")
+    parser.add_argument(
+        '--word_sep', '-w', type=str, default='^', metavar='STR',
+        help="Word separator when using custom unit, else ignore (default: %(default)s))")
+    parser.add_argument(
+        '--notok', '-t', action="store_true",
+        help="Do not restrict BPE units to word level, they can span words")
+
 
     return parser
 
@@ -85,14 +114,14 @@ def get_pairs(word):
         prev_char = char
     return pairs
 
-def encode(orig, bpe_codes, cache={}):
+def encode(orig, bpe_codes, is_custom_unit, word_sep, cache={}):
     """Encode word based on list of BPE merge operations, which are applied consecutively
     """
 
     if orig in cache:
         return cache[orig]
 
-    word = tuple(orig) + ('</w>',)
+    word = (tuple(orig.strip().split()) if is_custom_unit else tuple(orig.strip())) + ('</w>',)
     pairs = get_pairs(word)
 
     while True:
@@ -138,7 +167,7 @@ if __name__ == '__main__':
     parser = create_parser()
     args = parser.parse_args()
 
-    bpe = BPE(args.codes, args.separator)
+    bpe = BPE(args.codes, args.separator, args.custom_unit, args.word_sep, args.notok)
 
     for line in args.input:
         args.output.write(bpe.segment(line).strip())

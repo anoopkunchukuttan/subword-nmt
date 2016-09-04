@@ -19,6 +19,7 @@ import re
 import copy
 import argparse
 from collections import defaultdict, Counter
+import itertools as it
 
 # hack for python2/3 compatibility
 from io import open
@@ -49,15 +50,38 @@ def create_parser():
     parser.add_argument(
         '--verbose', '-v', action="store_true",
         help="verbose mode.")
+    parser.add_argument(
+        '--custom_unit', '-u', action="store_true",
+        help="Use custom basic unit (default is character). Custom units are separated by space, while words are separated by character mentioned in --word_sep parameter")
+    parser.add_argument(
+        '--word_sep', '-w', type=str, default='^', metavar='STR',
+        help="Word separator when using custom unit, else ignore (default: %(default)s))")
+    parser.add_argument(
+        '--notok', '-t', action="store_true",
+        help="Do not restrict BPE units to word level, they can span words")
+
 
     return parser
 
-def get_vocabulary(fobj):
+def get_vocabulary(fobj,is_custom_unit,word_sep,notok):
     """Read text and return dictionary that encodes vocabulary
     """
+    def sent_split(l): 
+
+        words=[]
+        if notok:
+            words=[l]
+        elif is_custom_unit: 
+            words=l.split(word_sep)
+            words=list(it.chain.from_iterable(zip(words, [word_sep]*len(words))))[:-1]
+        else:
+            words=l.split()
+
+        return words
+
     vocab = Counter()
     for line in fobj:
-        for word in line.split():
+        for word in sent_split(re.sub(ur'\s+',u' ',line.strip())):
             vocab[word] += 1
     return vocab
 
@@ -176,8 +200,11 @@ if __name__ == '__main__':
     parser = create_parser()
     args = parser.parse_args()
 
-    vocab = get_vocabulary(args.input)
-    vocab = dict([(tuple(x)+('</w>',) ,y) for (x,y) in vocab.items()])
+    vocab = get_vocabulary(args.input,args.custom_unit,args.word_sep,args.notok)
+    if args.custom_unit: 
+        vocab = dict([(tuple(x.strip().split())+('</w>',) ,y) for (x,y) in vocab.items()])
+    else: 
+        vocab = dict([(tuple(x.strip())+('</w>',) ,y) for (x,y) in vocab.items()])
     sorted_vocab = sorted(vocab.items(), key=lambda x: x[1], reverse=True)
 
     stats, indices = get_pair_statistics(sorted_vocab)
